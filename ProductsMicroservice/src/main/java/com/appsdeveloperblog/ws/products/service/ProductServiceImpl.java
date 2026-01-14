@@ -2,12 +2,16 @@ package com.appsdeveloperblog.ws.products.service;
 
 import com.appsdeveloperblog.ws.core.ProductCreatedEvent;
 import com.appsdeveloperblog.ws.products.rest.CreateProductRestModel;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.header.Header;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.UUID;
 
 @Service
@@ -32,9 +36,18 @@ public class ProductServiceImpl implements ProductService {
                 productRestModel.quantity()
         );
 
+        ProducerRecord<String, ProductCreatedEvent> producerRecord = new ProducerRecord<>(
+                "product-created-events-topic",
+                productId,
+                productCreatedEvent
+        );
+
+        producerRecord.headers().add("messageId", UUID.randomUUID().toString().getBytes());
+
+
         // synchronous
         SendResult<String, ProductCreatedEvent> result =
-                kafkaTemplate.send("product-created-events-topic", productId, productCreatedEvent).get();
+                kafkaTemplate.send(producerRecord).get();
         LOGGER.info("Topic: " + result.getRecordMetadata().topic());
         LOGGER.info("Partition: " + result.getRecordMetadata().partition());
         LOGGER.info("Offset: " + result.getRecordMetadata().offset());
