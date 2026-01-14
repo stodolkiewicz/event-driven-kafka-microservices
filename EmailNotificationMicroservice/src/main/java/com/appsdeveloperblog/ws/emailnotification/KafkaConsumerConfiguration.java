@@ -1,5 +1,7 @@
 package com.appsdeveloperblog.ws.emailnotification;
 
+import com.appsdeveloperblog.ws.emailnotification.error.NotRetryableException;
+import com.appsdeveloperblog.ws.emailnotification.error.RetryableException;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -17,6 +19,7 @@ import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
 import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
 import org.springframework.kafka.support.serializer.JacksonJsonSerializer;
+import org.springframework.util.backoff.FixedBackOff;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -57,7 +60,13 @@ public class KafkaConsumerConfiguration {
         factory.getContainerProperties().setPollTimeout(3000);
 
         // will send the message to the same topic it got it from but ending with .DLT - product-created-events-topic.DLT
-        DefaultErrorHandler errorHandler = new DefaultErrorHandler(new DeadLetterPublishingRecoverer(kafkaTemplate));
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(
+            new DeadLetterPublishingRecoverer(kafkaTemplate),
+            new FixedBackOff(5000, 3)
+        );
+        errorHandler.addRetryableExceptions(RetryableException.class);
+        errorHandler.addNotRetryableExceptions(NotRetryableException.class);
+
         factory.setCommonErrorHandler(errorHandler);
 
         return factory;
