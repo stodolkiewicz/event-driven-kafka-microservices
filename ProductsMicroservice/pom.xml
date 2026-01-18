@@ -60,6 +60,35 @@
 			<scope>test</scope>
 		</dependency>
 
+<!--		&lt;!&ndash; Spring Kafka Test (obsługa @EmbeddedKafka, test utils) &ndash;&gt;-->
+<!--		<dependency>-->
+<!--			<groupId>org.springframework.kafka</groupId>-->
+<!--			<artifactId>spring-kafka-test</artifactId>-->
+<!--			<scope>test</scope>-->
+<!--		</dependency>-->
+
+<!--		&lt;!&ndash; Testcontainers JUnit 5 Support (integracja @Container, @Testcontainers) &ndash;&gt;-->
+<!--		<dependency>-->
+<!--			<groupId>org.testcontainers</groupId>-->
+<!--			<artifactId>junit-jupiter</artifactId>-->
+<!--			<scope>test</scope>-->
+<!--		</dependency>-->
+
+		<!-- Source: https://mvnrepository.com/artifact/org.testcontainers/kafka -->
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>kafka</artifactId>
+			<version>1.21.4</version>
+			<scope>test</scope>
+		</dependency>
+		<!-- Source: https://mvnrepository.com/artifact/org.testcontainers/junit-jupiter -->
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<version>1.21.4</version>
+			<scope>test</scope>
+		</dependency>
+
 	</dependencies>
 
 	<build>
