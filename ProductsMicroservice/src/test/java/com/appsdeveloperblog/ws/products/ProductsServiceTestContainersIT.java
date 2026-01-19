@@ -3,25 +3,30 @@ package com.appsdeveloperblog.ws.products;
 import com.appsdeveloperblog.ws.core.ProductCreatedEvent;
 import com.appsdeveloperblog.ws.products.rest.CreateProductRestModel;
 import com.appsdeveloperblog.ws.products.service.ProductService;
+import jakarta.annotation.PreDestroy;
 import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.common.serialization.StringDeserializer;
-import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.junit.jupiter.api.Test;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.junit.jupiter.api.*;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Profile;
+import org.springframework.context.ApplicationContext;
+import org.springframework.core.env.Environment;
 import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
+import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.KafkaMessageListenerContainer;
+import org.springframework.kafka.listener.MessageListener;
+import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
 import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
-import org.springframework.kafka.test.utils.KafkaTestUtils;
-import org.springframework.lang.NonNull;
+import org.springframework.kafka.test.utils.ContainerTestUtils;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -30,31 +35,35 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.ConfluentKafkaContainer;
 
 import java.math.BigDecimal;
-import java.time.Duration;
+
 import java.util.*;
-import java.util.stream.Collectors;
-import java.util.stream.StreamSupport;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
-@Testcontainers
 @ActiveProfiles("test")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class ProductsServiceTestContainersIT {
-    @Container
     static ConfluentKafkaContainer kafka = new ConfluentKafkaContainer("confluentinc/cp-kafka:7.4.0");
+
+//    // 4. DODAJ BLOK STATYCZNY - Start ręczny
+    static {
+        kafka.start();
+        // Dzięki temu kontener na 100% działa, zanim Spring spróbuje odczytać 'getBootstrapServers'
+    }
 
     @DynamicPropertySource
     static void overrideProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.kafka.producer.bootstrap-servers", kafka::getBootstrapServers);
         registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+
+//        kafka.start();
     }
 
     @Autowired
     private ProductService productService;
-
-    @Autowired
-    ConsumerFactory<String, ProductCreatedEvent> consumerFactory;
 
     @Value("${product-created-events-topic-name}")
     String topicName;
@@ -63,17 +72,31 @@ public class ProductsServiceTestContainersIT {
     private static final BigDecimal PRODUCT_PRICE = new BigDecimal(600);
     private static final Integer PRODUCT_QUANTITY = 1;
 
+    @Autowired
+    Environment environment;
+
+    private static ConcurrentMessageListenerContainer<String, ProductCreatedEvent> container;
+    private static BlockingQueue<ConsumerRecord<String, ProductCreatedEvent>> records;
+
+    @BeforeAll
+    void setup() {
+        DefaultKafkaConsumerFactory<String, Object> consumerFactory = new DefaultKafkaConsumerFactory<>(getConsumerProperties());
+        ContainerProperties containerProperties = new ContainerProperties(environment.getProperty("product-created-events-topic-name"));
+        container = new ConcurrentMessageListenerContainer<>(consumerFactory, containerProperties);
+        records = new LinkedBlockingQueue<>();
+        container.setupMessageListener((MessageListener<String, ProductCreatedEvent>) records::add);
+        container.start();
+        ContainerTestUtils.waitForAssignment(container, 1);
+    }
+
     @Test
     void testCreateProduct_whenGivenValidProductDetails_successfullySendsKafkaMessage() throws Exception {
         // given
         CreateProductRestModel createProductRestModel = new CreateProductRestModel(PRODUCT_TITLE, PRODUCT_PRICE, PRODUCT_QUANTITY);
 
-        Consumer<String, ProductCreatedEvent> consumer = consumerFactory.createConsumer();
-        consumer.subscribe(Collections.singleton(topicName));
-
         // when
         String productId = productService.createProduct(createProductRestModel);
-        ConsumerRecord<String, ProductCreatedEvent> record = KafkaTestUtils.getSingleRecord(consumer, topicName);
+        ConsumerRecord<String, ProductCreatedEvent> record = records.poll(10, java.util.concurrent.TimeUnit.SECONDS);
 
         // then
         assertThat(record).isNotNull();
@@ -98,54 +121,36 @@ public class ProductsServiceTestContainersIT {
         CreateProductRestModel createProductRestModel2 = new CreateProductRestModel(PRODUCT_TITLE.concat("b"), PRODUCT_PRICE, PRODUCT_QUANTITY);
         CreateProductRestModel createProductRestModel3 = new CreateProductRestModel(PRODUCT_TITLE.concat("c"), PRODUCT_PRICE, PRODUCT_QUANTITY);
 
-        Consumer<String, ProductCreatedEvent> consumer = consumerFactory.createConsumer();
-        consumer.subscribe(Collections.singleton(topicName));
-
         // when
         String productId1 = productService.createProduct(createProductRestModel1);
         String productId2 = productService.createProduct(createProductRestModel2);
         String productId3 = productService.createProduct(createProductRestModel3);
 
-        ConsumerRecords<String, ProductCreatedEvent> records = KafkaTestUtils.getRecords(consumer, Duration.ofSeconds(15));
 
-        // then
-        assertThat(records).hasSize(3);
-
-        List<ConsumerRecord<String, ProductCreatedEvent>> recordList = new ArrayList<>();
-        records.forEach(recordList::add);
-
-        assertThat(recordList.get(0).key()).isEqualTo(productId1);
-        assertThat(recordList.get(1).key()).isEqualTo(productId2);
-        assertThat(recordList.get(2).key()).isEqualTo(productId3);
-    }
-
-/*
-    // Simple in-class bean configuration. Not needed as TestContainersConfig exists.
-    @TestConfiguration
-    static class TestConfig {
-
-        @Bean
-        public ConsumerFactory<String, ProductCreatedEvent> testConsumerFactory() {
-            Map<String, Object> props = new HashMap<>();
-            props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers());
-            props.put(ConsumerConfig.GROUP_ID_CONFIG, "test-custom-group");
-            props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-            props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JacksonJsonDeserializer.class);
-            props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-            props.put(JacksonJsonDeserializer.TRUSTED_PACKAGES, "*");
-
-            return new DefaultKafkaConsumerFactory<>(props);
+        List<ConsumerRecord<String, ProductCreatedEvent>> receivedRecords = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            ConsumerRecord<String, ProductCreatedEvent> record = records.poll(10, java.util.concurrent.TimeUnit.SECONDS);
+            if (record != null) {
+                receivedRecords.add(record);
+            }
         }
 
-        @Profile("test")
-        @Bean
-        public NewTopic createTopic() {
-            return TopicBuilder.name("product-created-events-topic")
-                    .partitions(1)
-                    .replicas(1)
-                    .build();
-        }
+        assertThat(receivedRecords).hasSize(3);
+        assertThat(receivedRecords.get(0).key()).isEqualTo(productId1);
+        assertThat(receivedRecords.get(1).key()).isEqualTo(productId2);
+        assertThat(receivedRecords.get(2).key()).isEqualTo(productId3);
     }
- */
+
+    private Map<String, Object> getConsumerProperties() {
+        return Map.of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
+                ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class,
+                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class,
+                ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JacksonJsonDeserializer.class,
+                ConsumerConfig.GROUP_ID_CONFIG, environment.getProperty("spring.kafka.consumer.group-id"),
+                JacksonJsonDeserializer.TRUSTED_PACKAGES, environment.getProperty("spring.kafka.consumer.properties.spring.json.trusted.packages"),
+                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, environment.getProperty("spring.kafka.consumer.auto-offset-reset")
+        );
+    }
 
 }
