@@ -3,32 +3,20 @@ package com.appsdeveloperblog.ws.products.testcontainer;
 import com.appsdeveloperblog.ws.core.ProductCreatedEvent;
 import com.appsdeveloperblog.ws.products.rest.CreateProductRestModel;
 import com.appsdeveloperblog.ws.products.service.ProductService;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.core.env.Environment;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.MessageListener;
-import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
-import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
 import org.springframework.kafka.test.utils.ContainerTestUtils;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.kafka.ConfluentKafkaContainer;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -46,13 +34,12 @@ public class ProductsServiceTestContainersIT extends KafkaITBase {
 
     @BeforeAll
     void setup() {
-        DefaultKafkaConsumerFactory<String, Object> consumerFactory = new DefaultKafkaConsumerFactory<>(
-                KafkaTestContainersITUtils.getConsumerProperties(kafka, environment)
-        );
-        container = new ConcurrentMessageListenerContainer<>(
-                consumerFactory,
-                new ContainerProperties(environment.getProperty("product-created-events-topic-name"))
-        );
+        ConcurrentMessageListenerContainer<String, ProductCreatedEvent> container =
+            KafkaTestContainersITUtils.createContainer(
+                    kafka,
+                    environment,
+                    environment.getProperty("product-created-events-topic-name")
+            );
 
         // register message listener, which will add incoming records to records BlockingQueue
         container.setupMessageListener((MessageListener<String, ProductCreatedEvent>) records::add);
