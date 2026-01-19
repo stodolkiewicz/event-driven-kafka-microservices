@@ -1,4 +1,4 @@
-package com.appsdeveloperblog.ws.products;
+package com.appsdeveloperblog.ws.products.testcontainer;
 
 import com.appsdeveloperblog.ws.core.ProductCreatedEvent;
 import com.appsdeveloperblog.ws.products.rest.CreateProductRestModel;
@@ -34,40 +34,25 @@ import java.util.concurrent.LinkedBlockingQueue;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
-@ActiveProfiles("test")
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
-public class ProductsServiceTestContainersIT {
-    static ConfluentKafkaContainer kafka = new ConfluentKafkaContainer("confluentinc/cp-kafka:7.4.0");
-
-    static {
-        kafka.start();
-    }
-
-    @DynamicPropertySource
-    static void overrideProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.kafka.producer.bootstrap-servers", kafka::getBootstrapServers);
-        registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
-    }
-
+public class ProductsServiceTestContainersIT extends KafkaITBase {
     @Autowired
     private ProductService productService;
 
     @Value("${product-created-events-topic-name}")
     String topicName;
 
-    @Autowired
-    Environment environment;
-
     private ConcurrentMessageListenerContainer<String, ProductCreatedEvent> container;
-    private BlockingQueue<ConsumerRecord<String, ProductCreatedEvent>> records;
+    private BlockingQueue<ConsumerRecord<String, ProductCreatedEvent>> records = new LinkedBlockingQueue<>();
 
     @BeforeAll
     void setup() {
-        DefaultKafkaConsumerFactory<String, Object> consumerFactory = new DefaultKafkaConsumerFactory<>(getConsumerProperties());
-        ContainerProperties containerProperties = new ContainerProperties(environment.getProperty("product-created-events-topic-name"));
-        container = new ConcurrentMessageListenerContainer<>(consumerFactory, containerProperties);
-        records = new LinkedBlockingQueue<>();
+        DefaultKafkaConsumerFactory<String, Object> consumerFactory = new DefaultKafkaConsumerFactory<>(
+                KafkaTestContainersITUtils.getConsumerProperties(kafka, environment)
+        );
+        container = new ConcurrentMessageListenerContainer<>(
+                consumerFactory,
+                new ContainerProperties(environment.getProperty("product-created-events-topic-name"))
+        );
 
         // register message listener, which will add incoming records to records BlockingQueue
         container.setupMessageListener((MessageListener<String, ProductCreatedEvent>) records::add);
@@ -132,19 +117,6 @@ public class ProductsServiceTestContainersIT {
         assertThat(receivedRecords.get(1).key()).isEqualTo(productId2);
         assertThat(receivedRecords.get(2).key()).isEqualTo(productId3);
     }
-
-    private Map<String, Object> getConsumerProperties() {
-        return Map.of(
-                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers(),
-                ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class,
-                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class,
-                ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JacksonJsonDeserializer.class,
-                ConsumerConfig.GROUP_ID_CONFIG, environment.getProperty("spring.kafka.consumer.group-id"),
-                JacksonJsonDeserializer.TRUSTED_PACKAGES, environment.getProperty("spring.kafka.consumer.properties.spring.json.trusted.packages"),
-                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, environment.getProperty("spring.kafka.consumer.auto-offset-reset")
-        );
-    }
-
 }
 
 /*
